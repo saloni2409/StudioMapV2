@@ -1,0 +1,19 @@
+Create a new file with Todo List:
+1. Make this app Docker ready
+2.Create storage layer abstaction , to be switchable from local to gcp storage
+3. Make google auth provisions.
+4. API key to Secret Manager and env var
+5. usage tracking to Firestore or GCS with conflict handling
+
+
+Must change before deployment:
+
+Move all data storage from local disk to GCS
+Move API key to Secret Manager, read via environment variable
+Move usage tracking to Firestore or GCS with conflict handling
+
+Should change before deployment:
+
+Set up IAP for authentication instead of Streamlit OAuth — simpler to manage long term
+Move configuration (school name, settings) to environment variables or a GCS config document
+Add optimistic concurrency to studio profile saves
