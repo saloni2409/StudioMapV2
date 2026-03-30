@@ -12,7 +12,7 @@ class AnthropicProvider(AIProvider):
         key = cfg.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
         return anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic()
 
-    def extract_json_from_pdf(self, pdf_bytes: bytes) -> dict:
+    def extract_json_from_pdf(self, pdf_bytes: bytes) -> list[dict]:
         client = self._client()
         pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
 
@@ -36,29 +36,35 @@ class AnthropicProvider(AIProvider):
         )
 
         raw = response.content[0].text.strip()
-        
+
+        # Extract JSON object from response
         start = raw.find('{')
         end = raw.rfind('}')
         if start != -1 and end != -1:
             raw = raw[start:end+1]
-            
+
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
             raise ValueError(f"Model did not return valid JSON. Raw output: {raw[:200]}...")
 
+        # Always return a list of studio dicts
+        if isinstance(parsed, list):
+            return parsed
+        studios = parsed.get("studios")
+        if isinstance(studios, list):
+            return studios
+        # Fallback: treat the whole object as a single studio
+        return [parsed]
+
     def generate_text(self, system_prompt: str, user_prompt: str) -> str:
         client = self._client()
-        # Anthropic standard: put system instructions in user prompt or 'system' parameter.
-        # Here we just combine them.
-        prompt = f"{system_prompt}\\n\\n{user_prompt}"
-
         response = client.messages.create(
             model=CLAUDE_MODEL,
             max_tokens=MAX_TOKENS,
-            messages=[{"role": "user", "content": prompt}]
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}]
         )
-
         return response.content[0].text
 
     def test_connection(self) -> tuple[bool, str]:

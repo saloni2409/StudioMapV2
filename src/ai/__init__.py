@@ -24,24 +24,31 @@ def get_provider() -> AIProvider:
 # PUBLIC API (Mirroring old ai.py behavior)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def pdf_to_profile(pdf_bytes: bytes) -> StudioProfile:
+def pdf_to_profiles(pdf_bytes: bytes) -> list[StudioProfile]:
     """
-    Extract a structured StudioProfile from a PDF via the configured AI provider.
+    Extract one or more StudioProfiles from a PDF via the configured AI provider.
+    A single PDF may describe multiple studios — this returns all of them.
     """
     provider = get_provider()
-    data = provider.extract_json_from_pdf(pdf_bytes)
+    studios_data = provider.extract_json_from_pdf(pdf_bytes)  # always a list[dict]
 
-    # Build nested models safely
-    affordances = Affordances(**data.pop("affordances", {}))
-    tools       = [Tool(**t) for t in data.pop("tools", [])]
-    coursework  = [CourseworkMapping(**c) for c in data.pop("coursework", [])]
+    profiles = []
+    for data in studios_data:
+        affordances = Affordances(**data.pop("affordances", {}))
+        tools       = [Tool(**t) for t in data.pop("tools", [])]
+        coursework  = [CourseworkMapping(**c) for c in data.pop("coursework", [])]
+        profiles.append(StudioProfile(
+            affordances=affordances,
+            tools=tools,
+            coursework=coursework,
+            **data
+        ))
+    return profiles
 
-    return StudioProfile(
-        affordances=affordances,
-        tools=tools,
-        coursework=coursework,
-        **data
-    )
+
+def pdf_to_profile(pdf_bytes: bytes) -> StudioProfile:
+    """Backward-compat wrapper — returns the first extracted studio."""
+    return pdf_to_profiles(pdf_bytes)[0]
 
 
 def generate_plan(

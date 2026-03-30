@@ -27,7 +27,7 @@ for _d in [STUDIOS_DIR, PLANS_DIR, UPLOADS_DIR, IMAGES_DIR]:
 CLAUDE_MODEL    = "claude-sonnet-4-20250514"
 OPENAI_MODEL    = "gpt-4o"
 MAX_TOKENS      = 4096
-PDF_MAX_TOKENS  = 4096   # for PDF → profile extraction
+PDF_MAX_TOKENS  = 8192   # for PDF → profile extraction (higher for multi-studio PDFs)
 
 # ── Domain constants ──────────────────────────────────────────────────────────
 ALL_GRADES = [str(g) for g in range(1, 13)]

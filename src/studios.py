@@ -4,6 +4,8 @@ StudioMap — Tab 1: Studios
 Manage studio profiles — upload PDFs, edit details, add coursework ideas.
 """
 
+import threading
+import uuid as _uuid
 import streamlit as st
 from pathlib import Path
 from datetime import datetime
@@ -14,6 +16,58 @@ from config import ALL_GRADES, ALL_SUBJECTS, ALL_BOARDS, date_str, now_str, load
 from models import (
     StudioProfile, Affordances, Tool, CourseworkMapping
 )
+
+
+# ── Import task registry (module-level, persists across Streamlit reruns) ─────
+# Keyed by task_id. Each value: {status, filename, profiles, error, session_id}
+# "status": "pending" | "processing" | "done" | "error"
+_tasks: dict[str, dict] = {}
+_tasks_lock = threading.Lock()
+
+
+def _run_import_worker(task_id: str, file_bytes: bytes, file_name: str):
+    """Runs in a background thread. Extracts profiles and saves them."""
+    with _tasks_lock:
+        _tasks[task_id]["status"] = "processing"
+    try:
+        profiles = ai_layer.pdf_to_profiles(file_bytes)
+        saved = []
+        for p in profiles:
+            p.source_pdf = file_name
+            path = storage.save_studio(p)
+            saved.append((p.name, str(path)))
+        with _tasks_lock:
+            _tasks[task_id].update(status="done", profiles=saved)
+    except Exception as e:
+        with _tasks_lock:
+            _tasks[task_id].update(status="error", error=str(e))
+
+
+def _queue_import(file_bytes: bytes, file_name: str, session_id: str) -> str:
+    """Register a new import task and spawn its background thread. Returns task_id."""
+    task_id = _uuid.uuid4().hex
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "status":     "pending",
+            "filename":   file_name,
+            "profiles":   [],
+            "error":      "",
+            "session_id": session_id,
+        }
+    t = threading.Thread(target=_run_import_worker, args=(task_id, file_bytes, file_name), daemon=True)
+    t.start()
+    return task_id
+
+
+def _get_task(task_id: str) -> dict:
+    with _tasks_lock:
+        return dict(_tasks.get(task_id, {}))
+
+
+def _clear_tasks(task_ids: list[str]):
+    with _tasks_lock:
+        for tid in task_ids:
+            _tasks.pop(tid, None)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -41,6 +95,33 @@ def _quick_validated(p: Path) -> bool:
         return json.loads(p.read_text()).get("validated", False)
     except:
         return False
+
+def _session_id() -> str:
+    """
+    Returns a stable session ID that survives page refreshes by storing it
+    in the URL query param ?sid=... Streamlit preserves query params on reload.
+    """
+    sid = st.query_params.get("sid")
+    if not sid:
+        sid = _uuid.uuid4().hex
+        st.query_params["sid"] = sid
+    return sid
+
+
+def _restore_tasks_from_registry():
+    """
+    On page load (including after refresh), re-populate import_task_ids from
+    the module-level _tasks dict for this session. This reconnects the UI to
+    any background imports that were running before the refresh.
+    """
+    sid = _session_id()
+    with _tasks_lock:
+        my_task_ids = [tid for tid, t in _tasks.items() if t.get("session_id") == sid]
+    if my_task_ids:
+        # Merge with any already in session state (avoids duplicates)
+        existing = set(st.session_state.get("import_task_ids", []))
+        merged = list(existing | set(my_task_ids))
+        st.session_state["import_task_ids"] = merged
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -78,6 +159,7 @@ def render_sidebar():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def render():
+    _restore_tasks_from_registry()
     mode = st.session_state.get("studio_mode", "list")
 
     if mode == "edit" and st.session_state.get("studio_path"):
@@ -99,6 +181,11 @@ def _render_studio_list():
         st.write("")
         if st.button("➕ New Studio", type="primary", use_container_width=True):
             st.session_state["show_add_studio_dialog"] = True
+
+    # ── Persistent import queue (visible even after dialog closes) ────────
+    task_ids = st.session_state.get("import_task_ids", [])
+    if task_ids:
+        _render_import_queue(task_ids, inside_dialog=False)
 
     # ── New Studio Dialog ─────────────────────────────────────────────────
     if st.session_state.get("show_add_studio_dialog"):
@@ -153,6 +240,66 @@ def _render_studio_list():
             st.error(f"{p.name}: {e}")
 
 
+# ── Import queue panel ────────────────────────────────────────────────────────
+
+def _render_import_queue(task_ids: list[str], inside_dialog: bool = True):
+    """Renders the import progress panel. Called from dialog and list view."""
+    tasks = [_get_task(tid) for tid in task_ids]
+    if not tasks:
+        return
+
+    STATUS_ICON = {"pending": "⏳", "processing": "🔄", "done": "✅", "error": "❌"}
+
+    any_running = any(t.get("status") in ("pending", "processing") for t in tasks)
+    all_done    = all(t.get("status") in ("done", "error") for t in tasks)
+
+    with st.container(border=True):
+        hdr_col, btn_col = st.columns([4, 1])
+        with hdr_col:
+            st.markdown("**Import Queue**")
+        with btn_col:
+            if any_running:
+                if st.button("↻ Refresh", key=f"refresh_queue_{'d' if inside_dialog else 'l'}"):
+                    st.rerun()
+            elif all_done:
+                if st.button("Clear", key=f"clear_queue_{'d' if inside_dialog else 'l'}"):
+                    _clear_tasks(task_ids)
+                    st.session_state.pop("import_task_ids", None)
+                    st.rerun()
+
+        for task in tasks:
+            status   = task.get("status", "pending")
+            icon     = STATUS_ICON.get(status, "⏳")
+            filename = task.get("filename", "unknown")
+
+            if status == "done":
+                profiles = task.get("profiles", [])
+                names    = ", ".join(n for n, _ in profiles) if profiles else "—"
+                st.success(f"{icon} **{filename}** → {len(profiles)} studio(s): {names}")
+            elif status == "error":
+                st.error(f"{icon} **{filename}** — {task.get('error', 'Unknown error')}")
+                st.caption("Check your AI provider settings or try manual creation.")
+            elif status == "processing":
+                st.info(f"{icon} **{filename}** — Extracting with AI…")
+            else:
+                st.caption(f"{icon} **{filename}** — Queued")
+
+    # Auto-redirect: if exactly 1 studio total imported and all done
+    if all_done and not inside_dialog:
+        all_profiles = [p for t in tasks for p in t.get("profiles", [])]
+        errors = [t for t in tasks if t.get("status") == "error"]
+        if len(all_profiles) == 1 and not errors:
+            name, path = all_profiles[0]
+            _clear_tasks(task_ids)
+            st.session_state.pop("import_task_ids", None)
+            st.session_state["studio_mode"] = "edit"
+            st.session_state["studio_path"] = path
+            _clear_dirty()
+            st.rerun()
+
+
+# ── Add Studio dialog ─────────────────────────────────────────────────────────
+
 @st.dialog("➕ Add New Studio")
 def _render_add_studio_dialog():
     cfg     = load_config()
@@ -160,59 +307,48 @@ def _render_add_studio_dialog():
         cfg.get("ai_provider", "anthropic"), "AI"
     )
 
+    # Cancel button — clears flag so dialog won't reopen on next rerun/navigation
+    _, cancel_col = st.columns([5, 1])
+    with cancel_col:
+        if st.button("✕ Cancel", key="cancel_add_dialog", use_container_width=True):
+            st.session_state.pop("show_add_studio_dialog", None)
+            st.rerun()
+
     tab_pdf, tab_manual = st.tabs([f"📄 Upload PDF ({ai_name})", "✏️ Create Manually"])
 
     with tab_pdf:
         st.caption(f"{ai_name} will read the PDFs and fill in the profiles automatically.")
+        st.caption("PDFs with multiple studios will create a separate profile for each one.")
+
         uploaded_files = st.file_uploader(
             "Upload one or more studio documentation PDFs",
             type=["pdf"], key="dialog_pdf_upload",
             accept_multiple_files=True
         )
+
+        # Show existing queue if any
+        existing_task_ids = st.session_state.get("import_task_ids", [])
+        if existing_task_ids:
+            _render_import_queue(existing_task_ids, inside_dialog=True)
+
         if uploaded_files:
-            if st.button(f"⚡ Import {len(uploaded_files)} Studio(s)", type="primary"):
-                progress_bar = st.progress(0, text="Starting import...")
-                imported_paths = []
-                errors = []
-                
-                for i, file in enumerate(uploaded_files):
-                    progress = (i + 1) / len(uploaded_files)
-                    progress_bar.progress(progress, text=f"Processing {file.name} ({i+1}/{len(uploaded_files)})...")
-                    
-                    try:
-                        file.seek(0)
-                        profile = ai_layer.pdf_to_profile(file.read())
-                        profile.source_pdf = file.name
-                        path = storage.save_studio(profile)
-                        imported_paths.append((profile.name, path))
-                    except Exception as e:
-                        errors.append(f"{file.name}: {e}")
-                
-                progress_bar.empty()
-                
-                if imported_paths:
-                    st.success(f"✅ Successfully imported {len(imported_paths)} studio(s)!")
-                    for name, _ in imported_paths:
-                        st.caption(f"- {name}")
-                    
-                    if len(imported_paths) == 1 and not errors:
-                        # Only one file, and it worked — go to edit mode
-                        st.session_state["studio_mode"] = "edit"
-                        st.session_state["studio_path"] = str(imported_paths[0][1])
-                        st.session_state.pop("show_add_studio_dialog", None)
-                        _clear_dirty()
-                        st.rerun()
-                    else:
-                        # Multiple files or mixed results — stay on list but close dialog
-                        if st.button("Close and View List"):
-                            st.session_state.pop("show_add_studio_dialog", None)
-                            st.rerun()
-                
-                if errors:
-                    st.error("Some files failed to import:")
-                    for err in errors:
-                        st.markdown(f"- {err}")
-                    st.info("Check your AI provider settings or try manual creation for these.")
+            btn_label = f"⚡ Import {len(uploaded_files)} PDF(s)"
+            if existing_task_ids:
+                btn_label = f"⚡ Add {len(uploaded_files)} More PDF(s) to Queue"
+
+            if st.button(btn_label, type="primary"):
+                sid = _session_id()
+                new_task_ids = []
+                for file in uploaded_files:
+                    file.seek(0)
+                    task_id = _queue_import(file.read(), file.name, sid)
+                    new_task_ids.append(task_id)
+
+                # Merge with any existing task IDs
+                all_ids = existing_task_ids + new_task_ids
+                st.session_state["import_task_ids"] = all_ids
+                st.session_state.pop("show_add_studio_dialog", None)
+                st.rerun()
 
     with tab_manual:
         name = st.text_input("Studio Name *", placeholder="e.g. Duolingo Lab", key="new_studio_name")
