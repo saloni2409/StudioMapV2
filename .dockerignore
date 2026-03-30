@@ -1,0 +1,13 @@
+.git
+.claude
+.github
+.env
+.env.*
+data/
+tests/
+*.pyc
+__pycache__/
+credentials.json
+*.zip
+*.log
+docker-compose*.yml
