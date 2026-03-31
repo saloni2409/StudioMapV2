@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      # Storage mode: "local" (default) or "gcs"
+      - STORAGE_MODE=local
+
+      # AI provider API keys (can also be set in the Settings UI)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+      # --- GCS mode (uncomment and fill in to use GCS) ---
+      # - STORAGE_MODE=gcs
+      # - GCS_BUCKET=your-studiomap-bucket
+      # - GCS_CREDENTIALS_JSON=${GCS_CREDENTIALS_JSON:-}
+
+    volumes:
+      # Mount local ./data for persistence in local mode.
+      # Remove this volume when using GCS mode.
+      - ./data:/app/data

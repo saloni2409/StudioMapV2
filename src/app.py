@@ -101,6 +101,7 @@ def _render_sidebar_nav(active: str, cfg: dict):
                 # Clear sub-page state when changing pages
                 if page_key == "studios":
                     st.session_state["studio_mode"] = "list"
+                    st.session_state.pop("show_add_studio_dialog", None)
                 st.rerun()
         if is_active:
             container.markdown('</div>', unsafe_allow_html=True)

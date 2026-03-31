@@ -66,7 +66,7 @@ class LocalProvider(AIProvider):
         cfg = load_config()
         return cfg.get("local_model_name", "llama3")
 
-    def extract_json_from_pdf(self, pdf_bytes: bytes) -> dict:
+    def extract_json_from_pdf(self, pdf_bytes: bytes) -> list[dict]:
         client = self._client()
 
         # Render pages as images so the vision model can see photos & diagrams
@@ -113,10 +113,17 @@ class LocalProvider(AIProvider):
         raw_json = raw[start:end+1] if start != -1 and end != -1 else raw
 
         try:
-            return json.loads(raw_json)
+            parsed = json.loads(raw_json)
         except json.JSONDecodeError as e:
             print(f"ERROR: JSON decode failed: {e}\nFull response:\n{raw}")
             raise ValueError(f"Model did not return valid JSON. Error: {e}. Check terminal for raw output.")
+
+        if isinstance(parsed, list):
+            return parsed
+        studios = parsed.get("studios")
+        if isinstance(studios, list):
+            return studios
+        return [parsed]
 
     def generate_text(self, system_prompt: str, user_prompt: str) -> str:
         client = self._client()

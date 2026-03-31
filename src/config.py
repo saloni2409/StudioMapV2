@@ -5,6 +5,7 @@ Single source of truth for all paths, constants, and settings.
 Nothing is hardcoded anywhere else — everything comes from here.
 """
 
+import os
 from pathlib import Path
 import json
 from datetime import datetime
@@ -27,7 +28,7 @@ for _d in [STUDIOS_DIR, PLANS_DIR, UPLOADS_DIR, IMAGES_DIR]:
 CLAUDE_MODEL    = "claude-sonnet-4-20250514"
 OPENAI_MODEL    = "gpt-4o"
 MAX_TOKENS      = 4096
-PDF_MAX_TOKENS  = 4096   # for PDF → profile extraction
+PDF_MAX_TOKENS  = 8192   # for PDF → profile extraction (higher for multi-studio PDFs)
 
 # ── Domain constants ──────────────────────────────────────────────────────────
 ALL_GRADES = [str(g) for g in range(1, 13)]
@@ -58,24 +59,65 @@ DEFAULT_CONFIG = {
     "openai_api_key":         "",           # optional — falls back to env var
     "local_model_url":        "http://127.0.0.1:11434/v1",
     "local_model_name":       "llama3",
+    "gcs_bucket":             "",           # GCS bucket name (or set GCS_BUCKET env var)
     "last_backup_local":      None,
     "last_backup_drive":      None,
     "app_version":            "2.0"
 }
 
+# Environment variable → config key mappings.
+# Env vars take precedence over stored config so Cloud Run deployments
+# can be configured entirely without touching the UI.
+_ENV_OVERRIDES = {
+    "STORAGE_MODE":          "storage_mode",
+    "GCS_BUCKET":            "gcs_bucket",
+    "ANTHROPIC_API_KEY":     "anthropic_api_key",
+    "OPENAI_API_KEY":        "openai_api_key",
+    "LOCAL_MODEL_URL":       "local_model_url",
+    "LOCAL_MODEL_NAME":      "local_model_name",
+    "AI_PROVIDER":           "ai_provider",
+    "SCHOOL_NAME":           "school_name",
+}
+
 
 def load_config() -> dict:
-    if CONFIG_FILE.exists():
+    saved: dict = {}
+
+    # In GCS mode, try reading config from the bucket first.
+    # We check the env var directly here to avoid a circular import with storage.py.
+    if os.environ.get("STORAGE_MODE") == "gcs":
         try:
-            saved = json.loads(CONFIG_FILE.read_text())
-            return {**DEFAULT_CONFIG, **saved}
+            from storage import load_remote_config
+            saved = load_remote_config()
         except Exception:
             pass
-    save_config(DEFAULT_CONFIG)
-    return DEFAULT_CONFIG.copy()
+    elif CONFIG_FILE.exists():
+        try:
+            saved = json.loads(CONFIG_FILE.read_text())
+        except Exception:
+            pass
+    else:
+        save_config(DEFAULT_CONFIG)
+
+    cfg = {**DEFAULT_CONFIG, **saved}
+
+    # Environment variables take final precedence (Cloud Run deployment config)
+    for env_key, cfg_key in _ENV_OVERRIDES.items():
+        val = os.environ.get(env_key)
+        if val:
+            cfg[cfg_key] = val
+
+    return cfg
 
 
 def save_config(cfg: dict):
+    if os.environ.get("STORAGE_MODE") == "gcs":
+        try:
+            from storage import save_remote_config
+            save_remote_config(cfg)
+            return
+        except Exception:
+            pass   # fall through to local save as backup
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
 
