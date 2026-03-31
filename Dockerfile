@@ -13,14 +13,13 @@ COPY src/ ./src/
 # and as primary storage in local mode
 RUN mkdir -p data/studios data/plans data/uploads data/images
 
-EXPOSE 8501
+# Cloud Run injects PORT env var (default 8080). Expose both for local use.
+EXPOSE 8080 8501
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
-
-ENTRYPOINT ["streamlit", "run", "src/app.py", \
-    "--server.port=8501", \
-    "--server.address=0.0.0.0", \
-    "--server.headless=true", \
-    "--server.fileWatcherType=none", \
-    "--browser.gatherUsageStats=false"]
+CMD ["sh", "-c", \
+    "streamlit run src/app.py \
+    --server.port=${PORT:-8501} \
+    --server.address=0.0.0.0 \
+    --server.headless=true \
+    --server.fileWatcherType=none \
+    --browser.gatherUsageStats=false"]
