@@ -1,0 +1,6 @@
+[server]
+# Required when running behind a reverse proxy (e.g. Cloud Run, nginx).
+# Without these, Streamlit's XSRF protection causes 400 errors on all
+# file uploads and form submissions.
+enableCORS = false
+enableXsrfProtection = false
