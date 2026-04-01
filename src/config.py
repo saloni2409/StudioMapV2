@@ -62,7 +62,8 @@ DEFAULT_CONFIG = {
     "gcs_bucket":             "",           # GCS bucket name (or set GCS_BUCKET env var)
     "last_backup_local":      None,
     "last_backup_drive":      None,
-    "app_version":            "2.0"
+    "app_version":            "2.0",
+    "custom_subjects":        []
 }
 
 # Environment variable → config key mappings.
@@ -120,6 +121,12 @@ def save_config(cfg: dict):
             pass   # fall through to local save as backup
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+
+
+def get_all_subjects(cfg: dict) -> list[str]:
+    """Returns the base subject list merged with any user-added custom subjects."""
+    custom = [s for s in cfg.get("custom_subjects", []) if s not in ALL_SUBJECTS]
+    return ALL_SUBJECTS + custom
 
 
 def now_str() -> str:

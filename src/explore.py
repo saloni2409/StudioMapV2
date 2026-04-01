@@ -10,7 +10,7 @@ from pathlib import Path
 from collections import defaultdict
 
 import storage
-from config import ALL_GRADES, ALL_SUBJECTS
+from config import ALL_GRADES, ALL_SUBJECTS, load_config, get_all_subjects
 from models import LessonPlan
 
 

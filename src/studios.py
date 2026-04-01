@@ -12,7 +12,7 @@ from datetime import datetime
 
 import storage
 import ai as ai_layer
-from config import ALL_GRADES, ALL_SUBJECTS, ALL_BOARDS, date_str, now_str, load_config
+from config import ALL_GRADES, ALL_SUBJECTS, ALL_BOARDS, date_str, now_str, load_config, save_config, get_all_subjects
 from models import (
     StudioProfile, Affordances, Tool, CourseworkMapping
 )
@@ -464,9 +464,19 @@ def _tab_profile(profile: StudioProfile, path: Path) -> StudioProfile:
         nv = st.multiselect("Grades", ALL_GRADES, default=v, key=f"grades_{path.stem}")
         if nv != v: profile.grades = nv; _mark_dirty()
     with c2:
-        v  = profile.subjects
-        nv = st.multiselect("Subjects", ALL_SUBJECTS, default=v, key=f"subj_{path.stem}")
-        if nv != v: profile.subjects = nv; _mark_dirty()
+        _cfg = load_config()
+        effective_subjects = get_all_subjects(_cfg)
+        unknown = [s for s in profile.subjects if s not in effective_subjects]
+        for subj in unknown:
+            uc1, uc2 = st.columns([4, 1])
+            uc1.warning(f'"{subj}" is not in the subjects list (extracted by AI).')
+            if uc2.button(f'Add "{subj}"', key=f"add_subj_{subj}_{path.stem}"):
+                _cfg["custom_subjects"] = _cfg.get("custom_subjects", []) + [subj]
+                save_config(_cfg)
+                st.rerun()
+        safe_default = [s for s in profile.subjects if s in effective_subjects]
+        nv = st.multiselect("Subjects", effective_subjects, default=safe_default, key=f"subj_{path.stem}")
+        if nv != profile.subjects: profile.subjects = nv; _mark_dirty()
     with c3:
         v  = profile.board
         nv = st.selectbox("Board", ALL_BOARDS,
