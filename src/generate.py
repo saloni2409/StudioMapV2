@@ -10,6 +10,7 @@ from pathlib import Path
 
 import storage
 import ai as ai_layer
+import activity as act
 from config import ALL_GRADES, ALL_SUBJECTS, ALL_BOARDS, date_str, load_config, get_all_subjects
 from models import LessonPlan
 
@@ -85,6 +86,8 @@ def render():
                 )
                 objectives = ai_layer.extract_objectives(plan_text)
 
+                user        = st.session_state.get("user", {})
+                user_email  = user.get("email", "")
                 plan = LessonPlan(
                     topic=topic.strip(),
                     subject=subject,
@@ -95,8 +98,12 @@ def render():
                     studio_names=[studio_names[k] for k in selected],
                     plan_text=plan_text,
                     objectives=objectives,
-                    generated_by=teacher_name
+                    generated_by=teacher_name,
+                    created_by=user_email,
                 )
+                act.log_event(act.EventType.PLAN_GENERATE,
+                              entity_id=plan.plan_id, entity_name=plan.display_title(),
+                              metadata={"studios": plan.studio_names})
                 st.session_state["current_plan"] = plan.model_dump()
                 st.session_state["teacher_name"] = teacher_name
             except Exception as e:
@@ -141,12 +148,18 @@ def _render_plan_result():
     c1, c2, c3 = st.columns(3)
     with c1:
         if st.button("💾 Save Plan", type="primary", use_container_width=True):
-            plan.rating       = (rating + 1) if rating is not None else None
-            plan.rating_notes = notes
-            plan.saved        = True
+            user       = st.session_state.get("user", {})
+            user_email = user.get("email", "")
+            if rating is not None:
+                plan.set_rating(user_email, rating + 1, notes)
+            plan.saved = True
             storage.save_plan(plan)
-            # Update coursework rating on source studios if rated
-            if plan.rating and plan.rating >= 4:
+            act.log_event(act.EventType.PLAN_SAVE,
+                          entity_id=plan.plan_id, entity_name=plan.display_title())
+            if rating is not None and (rating + 1) >= 4:
+                act.log_event(act.EventType.PLAN_RATE,
+                              entity_id=plan.plan_id, entity_name=plan.display_title(),
+                              metadata={"stars": rating + 1})
                 _update_studio_ratings(plan)
             del st.session_state["current_plan"]
             st.success("✅ Plan saved! Find it in the Explore tab.")
@@ -188,7 +201,7 @@ def _find_similar_plans(subject: str, grade: str) -> list[LessonPlan]:
                 similar.append(plan)
         except:
             pass
-    return sorted(similar, key=lambda p: p.rating or 0, reverse=True)[:3]
+    return sorted(similar, key=lambda p: p.average_rating() or 0, reverse=True)[:3]
 
 
 def _update_studio_ratings(plan: LessonPlan):

@@ -12,6 +12,8 @@ from datetime import datetime
 
 import storage
 import ai as ai_layer
+import auth
+import activity as act
 from config import ALL_GRADES, ALL_SUBJECTS, ALL_BOARDS, date_str, now_str, load_config, save_config, get_all_subjects
 from models import (
     StudioProfile, Affordances, Tool, CourseworkMapping
@@ -25,7 +27,8 @@ _tasks: dict[str, dict] = {}
 _tasks_lock = threading.Lock()
 
 
-def _run_import_worker(task_id: str, file_bytes: bytes, file_name: str):
+def _run_import_worker(task_id: str, file_bytes: bytes, file_name: str,
+                       user_email: str = "", user_name: str = ""):
     """Runs in a background thread. Extracts profiles and saves them."""
     with _tasks_lock:
         _tasks[task_id]["status"] = "processing"
@@ -36,6 +39,15 @@ def _run_import_worker(task_id: str, file_bytes: bytes, file_name: str):
             p.source_pdf = file_name
             path = storage.save_studio(p)
             saved.append((p.name, str(path)))
+            # Log from thread — pass user explicitly (can't use session_state here)
+            try:
+                import activity as _act
+                _act.log_event(_act.EventType.STUDIO_UPLOAD_PDF,
+                               entity_id=p.studio_id, entity_name=p.name or file_name,
+                               metadata={"file": file_name},
+                               user_email=user_email, user_name=user_name)
+            except Exception:
+                pass
         with _tasks_lock:
             _tasks[task_id].update(status="done", profiles=saved)
     except Exception as e:
@@ -46,6 +58,11 @@ def _run_import_worker(task_id: str, file_bytes: bytes, file_name: str):
 def _queue_import(file_bytes: bytes, file_name: str, session_id: str) -> str:
     """Register a new import task and spawn its background thread. Returns task_id."""
     task_id = _uuid.uuid4().hex
+    # Capture user identity now (before leaving the Streamlit thread)
+    import streamlit as _st
+    _user      = _st.session_state.get("user", {})
+    user_email = _user.get("email", "")
+    user_name  = _user.get("name", user_email)
     with _tasks_lock:
         _tasks[task_id] = {
             "status":     "pending",
@@ -54,7 +71,11 @@ def _queue_import(file_bytes: bytes, file_name: str, session_id: str) -> str:
             "error":      "",
             "session_id": session_id,
         }
-    t = threading.Thread(target=_run_import_worker, args=(task_id, file_bytes, file_name), daemon=True)
+    t = threading.Thread(
+        target=_run_import_worker,
+        args=(task_id, file_bytes, file_name, user_email, user_name),
+        daemon=True
+    )
     t.start()
     return task_id
 
@@ -160,17 +181,19 @@ def render_sidebar():
 
 def render():
     _restore_tasks_from_registry()
+    cfg      = load_config()
+    _is_admin = auth.is_admin(cfg)
     mode = st.session_state.get("studio_mode", "list")
 
     if mode == "edit" and st.session_state.get("studio_path"):
-        _render_edit_studio(Path(st.session_state["studio_path"]))
+        _render_edit_studio(Path(st.session_state["studio_path"]), _is_admin, cfg)
     else:
-        _render_studio_list()
+        _render_studio_list(_is_admin, cfg)
 
 
 # ── Studio list (home) ────────────────────────────────────────────────────────
 
-def _render_studio_list():
+def _render_studio_list(_is_admin: bool = True, cfg: dict = None):
     paths = storage.list_studios()
 
     # Header row
@@ -179,7 +202,7 @@ def _render_studio_list():
         st.markdown("## 🏫 Studios")
     with col_btn:
         st.write("")
-        if st.button("➕ New Studio", type="primary", use_container_width=True):
+        if _is_admin and st.button("➕ New Studio", type="primary", use_container_width=True):
             st.session_state["show_add_studio_dialog"] = True
 
     # ── Persistent import queue (visible even after dialog closes) ────────
@@ -189,7 +212,10 @@ def _render_studio_list():
 
     # ── New Studio Dialog ─────────────────────────────────────────────────
     if st.session_state.get("show_add_studio_dialog"):
-        _render_add_studio_dialog()
+        if _is_admin:
+            _render_add_studio_dialog()
+        else:
+            st.session_state.pop("show_add_studio_dialog", None)
 
     st.divider()
 
@@ -360,6 +386,8 @@ def _render_add_studio_dialog():
             else:
                 profile = StudioProfile(name=name.strip(), studio_id=sid.strip())
                 path    = storage.save_studio(profile)
+                act.log_event(act.EventType.STUDIO_CREATE_MANUAL,
+                              entity_id=profile.studio_id, entity_name=profile.name)
                 st.success(f"✅ '{name}' created.")
                 st.session_state["studio_mode"] = "edit"
                 st.session_state["studio_path"] = str(path)
@@ -370,7 +398,7 @@ def _render_add_studio_dialog():
 
 # ── Edit studio ───────────────────────────────────────────────────────────────
 
-def _render_edit_studio(path: Path):
+def _render_edit_studio(path: Path, _is_admin: bool = True, cfg: dict = None):
     try:
         profile = storage.load_studio(path)
     except Exception as e:
@@ -686,6 +714,8 @@ def _save_bar(profile: StudioProfile, path: Path):
             profile.reviewed_date = now_str()
             storage.save_studio(profile, path)
             _clear_dirty()
+            act.log_event(act.EventType.STUDIO_EDIT_SAVE,
+                          entity_id=profile.studio_id, entity_name=profile.name or "")
             st.success("Saved!")
             st.rerun()
     with c4:
@@ -710,6 +740,8 @@ def _save_bar(profile: StudioProfile, path: Path):
         with c1:
             if st.button("✅ Yes, delete permanently", key=f"yes_del_edit_{path.stem}",
                           type="primary", use_container_width=True):
+                act.log_event(act.EventType.STUDIO_DELETE,
+                              entity_id=profile.studio_id, entity_name=profile.name or "")
                 storage.delete_studio(path)
                 st.session_state["studio_mode"] = "list"
                 st.session_state.pop("studio_path", None)

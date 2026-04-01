@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import load_config
+import auth
 import studios
 import generate
 import explore
@@ -120,17 +121,24 @@ def _render_sidebar_nav(active: str, cfg: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    cfg = load_config()
+
+    # ── Auth gate — renders login page and returns if not logged in ───────────
+    if not auth.require_login(cfg):
+        return
+
     # Session state defaults
     if "active_page"     not in st.session_state: st.session_state["active_page"]     = "studios"
     if "studio_mode"     not in st.session_state: st.session_state["studio_mode"]     = "list"
     if "studios_unsaved" not in st.session_state: st.session_state["studios_unsaved"] = False
 
-    cfg         = load_config()
     active_page = st.session_state["active_page"]
 
     # ── Sidebar ───────────────────────────────────────────────────────────────
     with st.sidebar:
         _render_sidebar_nav(active_page, cfg)
+        st.divider()
+        auth.render_logout_button()
 
     # ── Main content ──────────────────────────────────────────────────────────
     if active_page == "studios":

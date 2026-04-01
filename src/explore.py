@@ -10,6 +10,7 @@ from pathlib import Path
 from collections import defaultdict
 
 import storage
+import activity as act
 from config import ALL_GRADES, ALL_SUBJECTS, load_config, get_all_subjects
 from models import LessonPlan
 
@@ -68,8 +69,8 @@ def render():
     with c2:
         st.metric("Showing", len(filtered))
     with c3:
-        rated = [p for p in plans if p.rating]
-        avg   = sum(p.rating for p in rated) / len(rated) if rated else 0
+        rated = [p for p in plans if p.average_rating() is not None]
+        avg   = sum(p.average_rating() for p in rated) / len(rated) if rated else 0
         st.metric("Avg Rating", f"{'⭐' * round(avg)}" if avg else "—")
     with c4:
         studios_covered = len({s for p in plans for s in p.studio_ids})
@@ -99,7 +100,7 @@ def _apply_filters(plans: list[LessonPlan]) -> list[LessonPlan]:
     if subjects:  out = [p for p in out if p.subject in subjects]
     if studios:   out = [p for p in out if any(s in p.studio_names for s in studios)]
     if boards:    out = [p for p in out if p.board in boards]
-    if min_rat:   out = [p for p in out if (p.rating or 0) >= min_rat]
+    if min_rat:   out = [p for p in out if (p.average_rating() or 0) >= min_rat]
     if search:    out = [p for p in out if search in p.topic.lower() or search in p.subject.lower()]
     return out
 
@@ -116,13 +117,18 @@ def _render_plan_list(plans: list[LessonPlan]):
 
 
 def _render_plan_card(plan: LessonPlan):
-    stars       = "⭐" * plan.rating if plan.rating else "not rated"
+    user        = st.session_state.get("user", {})
+    user_email  = user.get("email", "")
+    my_rating   = plan.user_rating(user_email)
+    avg_rating  = plan.average_rating()
+    stars       = "⭐" * my_rating if my_rating else ("not rated" if not avg_rating else f"avg {'⭐' * round(avg_rating)}")
     studios_str = " + ".join(plan.studio_names) if plan.studio_names else "—"
     label = f"**{plan.topic}** · Grade {plan.grade} · {plan.subject} · {stars}"
 
     with st.expander(label):
         st.caption(f"Studios: {studios_str}  ·  {plan.sessions} session(s)  "
-                   f"·  {plan.board}  ·  {plan.generated_date}")
+                   f"·  {plan.board}  ·  {plan.generated_date}"
+                   + (f"  ·  by {plan.created_by}" if plan.created_by else ""))
 
         if plan.objectives:
             st.markdown("**Learning Objectives**")
@@ -135,20 +141,27 @@ def _render_plan_card(plan: LessonPlan):
         c1, c2, c3 = st.columns(3)
         with c1:
             new_rating = st.feedback("stars", key=f"rate_{plan.plan_id}")
-            if new_rating is not None and (new_rating + 1) != plan.rating:
-                plan.rating = new_rating + 1
+            if new_rating is not None and (new_rating + 1) != my_rating:
+                plan.set_rating(user_email, new_rating + 1)
                 storage.save_plan(plan)
+                act.log_event(act.EventType.PLAN_RATE,
+                              entity_id=plan.plan_id, entity_name=plan.display_title(),
+                              metadata={"stars": new_rating + 1})
                 st.rerun()
         with c2:
-            st.download_button(
+            if st.download_button(
                 "📥 Download",
                 data=plan.plan_text,
                 file_name=f"{plan.topic.lower().replace(' ','_')}_g{plan.grade}.md",
                 mime="text/markdown",
                 key=f"dl_{plan.plan_id}"
-            )
+            ):
+                act.log_event(act.EventType.PLAN_DOWNLOAD,
+                              entity_id=plan.plan_id, entity_name=plan.display_title())
         with c3:
             if st.button("🗑️ Delete", key=f"del_{plan.plan_id}"):
+                act.log_event(act.EventType.PLAN_DELETE,
+                              entity_id=plan.plan_id, entity_name=plan.display_title())
                 path = storage.PLANS_DIR / plan.filename()
                 storage.delete_plan(path)
                 st.rerun()
