@@ -8,6 +8,8 @@ Lives in the sidebar as a persistent ⚙️ button.
 import streamlit as st
 import storage
 import ai as ai_layer
+import auth
+import activity as act
 from config import CREDS_FILE, load_config, save_config, now_str, ALL_SUBJECTS
 
 
@@ -214,10 +216,83 @@ def render():
 
     st.divider()
 
+    # ── Google OAuth ──────────────────────────────────────────────────────────
+    st.markdown("#### 🔐 Google OAuth")
+    st.caption("Required for user login. Set up at console.cloud.google.com → APIs & Services → Credentials.")
+
+    with st.expander("OAuth Setup Guide"):
+        st.markdown("""
+1. Go to [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services → Credentials**
+2. Click **Create Credentials → OAuth 2.0 Client ID** → Application type: **Web application**
+3. Add your Cloud Run URL + `/` to **Authorised redirect URIs** (e.g. `https://your-app.run.app/`)
+4. Copy **Client ID** and **Client Secret** below
+5. Set `ADMIN_EMAIL` to your Google account email
+        """)
+
+    v  = cfg.get("google_client_id", "")
+    nv = st.text_input("Google Client ID", value=v, placeholder="123...apps.googleusercontent.com")
+    if nv != v: cfg["google_client_id"] = nv; changed = True
+
+    v  = cfg.get("google_client_secret", "")
+    nv = st.text_input("Google Client Secret", value=v, type="password", placeholder="GOCSPX-...")
+    if nv != v: cfg["google_client_secret"] = nv; changed = True
+
+    v  = cfg.get("google_redirect_uri", "http://localhost:8501")
+    nv = st.text_input("Redirect URI", value=v, placeholder="https://your-app.run.app/")
+    if nv != v: cfg["google_redirect_uri"] = nv; changed = True
+
+    v  = cfg.get("admin_email", "")
+    nv = st.text_input("Admin Email", value=v, placeholder="admin@yourschool.org")
+    if nv != v: cfg["admin_email"] = nv; changed = True
+
+    v  = cfg.get("google_workspace_domain", "")
+    nv = st.text_input("Workspace Domain (optional)", value=v,
+                        placeholder="yourschool.org — leave blank to allow any Google account")
+    if nv != v: cfg["google_workspace_domain"] = nv; changed = True
+
+    st.divider()
+
+    # ── Activity Log ──────────────────────────────────────────────────────────
+    st.markdown("#### 📊 Activity Log")
+    _is_admin = auth.is_admin(cfg)
+
+    with st.expander("View Activity"):
+        import pandas as pd
+        from datetime import date, timedelta
+
+        c1, c2 = st.columns(2)
+        with c1:
+            start = st.date_input("From", value=date.today() - timedelta(days=7))
+        with c2:
+            end = st.date_input("To", value=date.today())
+
+        start_str = start.strftime("%Y-%m-%d")
+        end_str   = end.strftime("%Y-%m-%d")
+
+        if _is_admin:
+            events = storage.list_all_activity(start_str, end_str)
+        else:
+            user = st.session_state.get("user", {})
+            events = storage.list_activity(user.get("email", ""), start_str, end_str)
+
+        if events:
+            rows = [{
+                "Time":   e.timestamp[:16].replace("T", " "),
+                "User":   e.user_email,
+                "Action": e.event_type.value,
+                "Item":   e.entity_name,
+            } for e in events]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("No activity in this date range.")
+
+    st.divider()
+
     # ── Save ──────────────────────────────────────────────────────────────────
     if changed:
         st.warning("Unsaved changes")
     if st.button("💾 Save Settings", type="primary", use_container_width=True):
         save_config(cfg)
+        act.log_event(act.EventType.SETTINGS_SAVE)
         st.success("✅ Saved!")
         st.rerun()

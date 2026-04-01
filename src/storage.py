@@ -25,7 +25,7 @@ from typing import Optional
 from datetime import datetime
 
 from config import (
-    STUDIOS_DIR, PLANS_DIR, IMAGES_DIR, DATA_DIR,
+    STUDIOS_DIR, PLANS_DIR, IMAGES_DIR, DATA_DIR, ACTIVITY_DIR,
     CREDS_FILE, load_config, save_config, now_str
 )
 from models import StudioProfile, LessonPlan
@@ -56,6 +56,10 @@ class _Backend:
     def exists(self, key: str) -> bool:
         raise NotImplementedError
 
+    def append_bytes(self, key: str, data: bytes) -> None:
+        """Append bytes to a file (used for JSONL activity logs)."""
+        raise NotImplementedError
+
 
 class _LocalBackend(_Backend):
     """Reads and writes plain files under DATA_DIR."""
@@ -82,6 +86,12 @@ class _LocalBackend(_Backend):
 
     def exists(self, key: str) -> bool:
         return (self._base / key).exists()
+
+    def append_bytes(self, key: str, data: bytes) -> None:
+        path = self._base / key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "ab") as f:
+            f.write(data)
 
 
 class _GCSBackend(_Backend):
@@ -144,6 +154,17 @@ class _GCSBackend(_Backend):
 
     def exists(self, key: str) -> bool:
         return self._bucket.blob(key).exists()
+
+    def append_bytes(self, key: str, data: bytes) -> None:
+        """GCS has no native append — download, append, re-upload.
+        Per-user per-day files mean no two users ever share a file,
+        so the read-modify-write race is a non-issue in practice."""
+        blob = self._bucket.blob(key)
+        try:
+            existing = blob.download_as_bytes()
+        except Exception:
+            existing = b""
+        blob.upload_from_string(existing + data, content_type="application/jsonl")
 
 
 # ── Backend singleton (one per process) ──────────────────────────────────────
@@ -278,6 +299,70 @@ def image_path(rel: str) -> Path:
         except Exception:
             pass   # image unavailable; caller handles missing file
     return local
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ACTIVITY LOG  (per-user per-day JSONL)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def append_activity(event) -> None:
+    """Append one ActivityEvent as a JSONL line. Silently swallows all errors."""
+    try:
+        import hashlib
+        eh   = hashlib.md5(event.user_email.lower().encode()).hexdigest()[:12]
+        date = event.timestamp[:10]   # YYYY-MM-DD
+        key  = f"activity/{eh}/{date}.jsonl"
+        line = (event.model_dump_json() + "\n").encode()
+        _get_backend().append_bytes(key, line)
+    except Exception:
+        pass
+
+
+def list_activity(user_email: str, start_date: str = "", end_date: str = ""):
+    """Return ActivityEvents for a single user, newest first."""
+    import hashlib
+    from datetime import date as _date
+    eh   = hashlib.md5(user_email.lower().encode()).hexdigest()[:12]
+    return _read_activity_for_hash(eh, start_date, end_date)
+
+
+def list_all_activity(start_date: str = "", end_date: str = ""):
+    """Return ActivityEvents for ALL users (admin only), newest first."""
+    b = _get_backend()
+    # Collect all unique email_hash prefixes under activity/
+    try:
+        all_keys = b.list_keys("activity")
+    except Exception:
+        return []
+    events = []
+    for eh in all_keys:
+        events.extend(_read_activity_for_hash(eh, start_date, end_date))
+    return sorted(events, key=lambda e: e.timestamp, reverse=True)
+
+
+def _read_activity_for_hash(email_hash: str, start_date: str, end_date: str):
+    from activity import ActivityEvent
+    b      = _get_backend()
+    events = []
+    try:
+        day_files = b.list_keys(f"activity/{email_hash}")
+    except Exception:
+        return []
+    for fname in day_files:
+        day = fname.replace(".jsonl", "")
+        if start_date and day < start_date:
+            continue
+        if end_date and day > end_date:
+            continue
+        try:
+            raw = b.read(f"activity/{email_hash}/{fname}")
+            for line in raw.decode().splitlines():
+                line = line.strip()
+                if line:
+                    events.append(ActivityEvent(**json.loads(line)))
+        except Exception:
+            pass
+    return sorted(events, key=lambda e: e.timestamp, reverse=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

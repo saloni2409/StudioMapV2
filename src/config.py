@@ -12,13 +12,14 @@ from datetime import datetime
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent.parent
-DATA_DIR    = BASE_DIR / "data"
-STUDIOS_DIR = DATA_DIR / "studios"
-PLANS_DIR   = DATA_DIR / "plans"
-UPLOADS_DIR = DATA_DIR / "uploads"
-IMAGES_DIR  = DATA_DIR / "images"
-CONFIG_FILE = DATA_DIR / "config.json"
-CREDS_FILE  = BASE_DIR / "credentials.json"   # Google Drive service account key
+DATA_DIR     = BASE_DIR / "data"
+STUDIOS_DIR  = DATA_DIR / "studios"
+PLANS_DIR    = DATA_DIR / "plans"
+UPLOADS_DIR  = DATA_DIR / "uploads"
+IMAGES_DIR   = DATA_DIR / "images"
+ACTIVITY_DIR = DATA_DIR / "activity"
+CONFIG_FILE  = DATA_DIR / "config.json"
+CREDS_FILE   = BASE_DIR / "credentials.json"   # Google Drive service account key
 
 # Create all directories on import
 for _d in [STUDIOS_DIR, PLANS_DIR, UPLOADS_DIR, IMAGES_DIR]:
@@ -60,24 +61,34 @@ DEFAULT_CONFIG = {
     "local_model_url":        "http://127.0.0.1:11434/v1",
     "local_model_name":       "llama3",
     "gcs_bucket":             "",           # GCS bucket name (or set GCS_BUCKET env var)
-    "last_backup_local":      None,
-    "last_backup_drive":      None,
-    "app_version":            "2.0",
-    "custom_subjects":        []
+    "last_backup_local":        None,
+    "last_backup_drive":        None,
+    "app_version":              "2.0",
+    "custom_subjects":          [],
+    "google_client_id":         "",
+    "google_client_secret":     "",
+    "google_redirect_uri":      "http://localhost:8501",
+    "admin_email":              "",
+    "google_workspace_domain":  "",
 }
 
 # Environment variable → config key mappings.
 # Env vars take precedence over stored config so Cloud Run deployments
 # can be configured entirely without touching the UI.
 _ENV_OVERRIDES = {
-    "STORAGE_MODE":          "storage_mode",
-    "GCS_BUCKET":            "gcs_bucket",
-    "ANTHROPIC_API_KEY":     "anthropic_api_key",
-    "OPENAI_API_KEY":        "openai_api_key",
-    "LOCAL_MODEL_URL":       "local_model_url",
-    "LOCAL_MODEL_NAME":      "local_model_name",
-    "AI_PROVIDER":           "ai_provider",
-    "SCHOOL_NAME":           "school_name",
+    "STORAGE_MODE":           "storage_mode",
+    "GCS_BUCKET":             "gcs_bucket",
+    "ANTHROPIC_API_KEY":      "anthropic_api_key",
+    "OPENAI_API_KEY":         "openai_api_key",
+    "LOCAL_MODEL_URL":        "local_model_url",
+    "LOCAL_MODEL_NAME":       "local_model_name",
+    "AI_PROVIDER":            "ai_provider",
+    "SCHOOL_NAME":            "school_name",
+    "GOOGLE_CLIENT_ID":       "google_client_id",
+    "GOOGLE_CLIENT_SECRET":   "google_client_secret",
+    "GOOGLE_REDIRECT_URI":    "google_redirect_uri",
+    "ADMIN_EMAIL":            "admin_email",
+    "GOOGLE_WORKSPACE_DOMAIN":"google_workspace_domain",
 }
 
 

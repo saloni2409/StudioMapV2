@@ -137,10 +137,23 @@ class LessonPlan(BaseModel):
     tools_used:   list[str] = []      # specific tools referenced
     objectives:   list[str] = []      # extracted learning objectives
     generated_date: str = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
-    generated_by: str = ""
-    rating:       Optional[int] = None     # 1-5 stars
-    rating_notes: str = ""
-    saved:        bool = False
+    generated_by:   str = ""
+    created_by:     str = ""              # email of the teacher who generated this plan
+    ratings:        dict[str, int] = {}   # email → 1-5 stars (per-user)
+    rating_notes:   dict[str, str] = {}   # email → note text  (per-user)
+    saved:          bool = False
+
+    def user_rating(self, email: str) -> Optional[int]:
+        return self.ratings.get(email)
+
+    def average_rating(self) -> Optional[float]:
+        if not self.ratings:
+            return None
+        return sum(self.ratings.values()) / len(self.ratings)
+
+    def set_rating(self, email: str, stars: int, note: str = ""):
+        self.ratings[email]      = stars
+        self.rating_notes[email] = note
 
     def filename(self) -> str:
         return f"{self.plan_id}.json"
