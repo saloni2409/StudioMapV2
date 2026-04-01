@@ -10,7 +10,7 @@ from pathlib import Path
 
 import storage
 import ai as ai_layer
-from config import ALL_GRADES, ALL_SUBJECTS, ALL_BOARDS, date_str
+from config import ALL_GRADES, ALL_SUBJECTS, ALL_BOARDS, date_str, load_config, get_all_subjects
 from models import LessonPlan
 
 
@@ -32,7 +32,7 @@ def render():
             topic = st.text_input("Topic / Chapter *",
                 placeholder="e.g. Forms of Verbs, Trigonometry, Water Cycle")
         with c2:
-            subject = st.selectbox("Subject", ALL_SUBJECTS)
+            subject = st.selectbox("Subject", get_all_subjects(load_config()))
         with c3:
             grade = st.selectbox("Grade", ALL_GRADES, index=4)
 

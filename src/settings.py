@@ -8,7 +8,7 @@ Lives in the sidebar as a persistent ⚙️ button.
 import streamlit as st
 import storage
 import ai as ai_layer
-from config import CREDS_FILE, load_config, save_config, now_str
+from config import CREDS_FILE, load_config, save_config, now_str, ALL_SUBJECTS
 
 
 def render():
@@ -22,6 +22,36 @@ def render():
     nv = st.text_input("School Name", value=v, placeholder="e.g. The Meadows School")
     if nv != v:
         cfg["school_name"] = nv; changed = True
+
+    st.divider()
+
+    # ── Subjects List ─────────────────────────────────────────────────────────
+    st.markdown("#### 📚 Subjects List")
+    st.caption("Custom subjects are available across studio and plan forms. Built-in subjects cannot be removed.")
+
+    custom = cfg.get("custom_subjects", [])
+    if custom:
+        for subj in custom:
+            sc1, sc2 = st.columns([5, 1])
+            sc1.write(subj)
+            if sc2.button("Remove", key=f"rm_subj_{subj}"):
+                cfg["custom_subjects"] = [s for s in custom if s != subj]
+                save_config(cfg)
+                st.rerun()
+    else:
+        st.caption("No custom subjects added yet.")
+
+    new_subj = st.text_input("Add a new subject", placeholder="e.g. Foreign Languages, Drama, Music")
+    if st.button("➕ Add Subject") and new_subj.strip():
+        subj = new_subj.strip()
+        if subj in ALL_SUBJECTS:
+            st.info(f'"{subj}" is already in the built-in list.')
+        elif subj in custom:
+            st.info(f'"{subj}" is already in your custom list.')
+        else:
+            cfg["custom_subjects"] = custom + [subj]
+            save_config(cfg)
+            st.rerun()
 
     st.divider()
 
